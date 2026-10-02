@@ -197,6 +197,10 @@ class TestConcurrency(ServiceCase):
                 self.assertEqual(row["email"], "after@example.com")
                 self.assertEqual(row["phone"], "13900000000")
                 self.assertEqual(row["address"], "改后地址")
+            elif row["name"] == "新增客户":
+                # 变更线程插入的纯新增行：除姓名外字段均为 NULL，
+                # 这也是一个完整提交版本（不是撕裂行）
+                self.assertIsNone(row["email"])
             else:
                 self.assertTrue(row["email"].endswith("@example.com"))
                 self.assertNotEqual(row["address"], "改后地址")
@@ -216,6 +220,40 @@ class TestConcurrency(ServiceCase):
             for i in range(r["chunk_count"])
         )
         self.assertEqual(before, after)
+
+    def test_snapshot_with_inserted_null_field_row_is_consistent(self):
+        """快照包含纯新增行（email 等字段为 NULL）时，逐行一致性检查不崩溃。"""
+        import json as _json
+
+        app_id = self.svc.apply_export("alice", "先改后批", chunk_size=1)
+        # 变更全部提交后再审批：快照必然含 7 行，其中新增行除姓名外为 NULL
+        for cid in range(1, 7):
+            self.svc.upsert_customer(
+                "root", customer_id=cid, name="改后名字",
+                email="after@example.com", phone="13900000000",
+                id_card="000000000000000000", address="改后地址",
+            )
+        self.svc.upsert_customer("root", customer_id=None, name="新增客户")
+        r = self.svc.approve_export("bob", app_id)
+        self.assertEqual(r["chunk_count"], 7)
+
+        conn = self.svc._conn()
+        try:
+            rows = conn.execute(
+                "SELECT data_json FROM snapshot_rows sr "
+                "JOIN snapshots s ON s.id = sr.snapshot_id "
+                "WHERE s.application_id=? ORDER BY position",
+                (app_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        data_rows = [_json.loads(r[0]) for r in rows]
+        self.assertTrue(any(row["name"] == "新增客户" for row in data_rows))
+        for row in data_rows:
+            if row["name"] == "改后名字":
+                self.assertEqual(row["email"], "after@example.com")
+            elif row["name"] == "新增客户":
+                self.assertIsNone(row["email"])
 
     def test_restart_does_not_duplicate_or_lose_state(self):
         app_id = self._apply_approve(chunk_size=2)

@@ -95,12 +95,17 @@ class _Handler(BaseHTTPRequestHandler):
         from .delivery import DeliveryService
         delivery = DeliveryService(svc)
         if path == '/recipient-grants':
-            return 201, delivery.grant(actor, body['application_id'], body['recipient'], body['indexes'], body['expires'])
+            return 201, delivery.grant(
+                actor, body['application_id'], body['recipient'],
+                body['indexes'], body['expires'])
         if path == '/recipient-grants/revoke':
             delivery.revoke(actor, body['grant_id'])
             return 200, {'ok': True}
         if path == '/recipient-grants/receive':
-            return 200, delivery.receive(actor, body['grant_id'], body['application_id'], body['indexes'], body['request_key'])
+            payload = delivery.receive(
+                actor, body['grant_id'], body['application_id'],
+                body['indexes'], body['request_key'])
+            return 200, payload
         # ---- 客户 / 规则管理 ----
         if path == "/customers":
             customer_id = body.get("id")
